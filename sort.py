@@ -31,6 +31,7 @@ import glob
 import time
 import argparse
 from filterpy.kalman import KalmanFilter
+import cv2
 
 np.random.seed(0)
 
@@ -289,17 +290,22 @@ if __name__ == '__main__':
   if not os.path.exists('output'):
     os.makedirs('output')
   pattern = os.path.join(args.seq_path, phase, '*', 'det', 'det.txt')
-
+  
   for seq_dets_fn in glob.glob(pattern):
+    # video_writer = cv2.VideoWriter("sort-gitt-mot.avi", cv2.VideoWriter_fourcc(*'DIVX'), 20, (640, 480))
+    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+    video_writer = cv2.VideoWriter("sort-gitt-results.avi", fourcc, 20, (640, 480))
+    
     mot_tracker = Sort(max_age=args.max_age, 
                        min_hits=args.min_hits,
                        iou_threshold=args.iou_threshold) #create instance of the SORT tracker
     seq_dets = np.loadtxt(seq_dets_fn, delimiter=',')
     seq = seq_dets_fn[pattern.find('*'):].split(os.path.sep)[0]
-    
+
     with open(os.path.join('output', '%s.txt'%(seq)),'w') as out_file:
       print("Processing %s."%(seq))
       for frame in range(int(seq_dets[:,0].max())):
+        print("frame: ", frame)
         frame += 1 #detection and frame numbers begin at 1
         dets = seq_dets[seq_dets[:, 0]==frame, 2:7]
         dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
@@ -322,10 +328,20 @@ if __name__ == '__main__':
             d = d.astype(np.int32)
             ax1.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=3,ec=colours[d[4]%32,:]))
 
+        fig.canvas.draw()
+
+        # Now we can save it to a numpy array.
+        data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+        data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        # pdb.set_trace()
+        video_writer.write(data)
         if(display):
           fig.canvas.flush_events()
           plt.draw()
           ax1.cla()
+
+  cv2.destroyAllWindows()
+  # video_writer.close()
 
   print("Total Tracking took: %.3f seconds for %d frames or %.1f FPS" % (total_time, total_frames, total_frames / total_time))
 
