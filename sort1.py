@@ -25,13 +25,15 @@ matplotlib.use('Agg') # In order to avoid: RuntimeError: main thread is not in m
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from skimage import io
-import pdb
+#import pdb
 
 import glob
 import time
 import argparse
 from filterpy.kalman import KalmanFilter
 import cv2
+
+from ultralytics import YOLO
 
 np.random.seed(0)
 
@@ -105,7 +107,7 @@ class KalmanBoxTracker(object):
     """
     #define constant velocity model
     self.kf = KalmanFilter(dim_x=7, dim_z=4) 
-    self.kf.F = np.array([[1,0,0,0,1,0,0],[0,1,0,0,0,1,0],[0,0,1,0,0,0,1],[0,0,0,1,0,0,0],[0,0,0,0,1,0,0],[0,0,0,0,0,1,0],[0,0,0,0,0,0,1]])
+    self.kf.F = np.array([[1,0,0,0,1,0,0],[0,1,0,0,0,1,0],[0,0,1,0,0,0,1],[0,0,0,1,0,0,0],  [0,0,0,0,1,0,0],[0,0,0,0,0,1,0],[0,0,0,0,0,0,1]])
     self.kf.H = np.array([[1,0,0,0,0,0,0],[0,1,0,0,0,0,0],[0,0,1,0,0,0,0],[0,0,0,1,0,0,0]])
 
     self.kf.R[2:,2:] *= 10.
@@ -154,7 +156,7 @@ class KalmanBoxTracker(object):
     return convert_x_to_bbox(self.kf.x)
 
 
-def associate_detections_to_trackers(detections,trackers,iou_threshold = 0.3):
+def associate_detections_to_trackers(detections,trackers,frame,iou_threshold = 0.3):
   """
   Assigns detections to tracked object (both represented as bounding boxes)
 
@@ -164,6 +166,9 @@ def associate_detections_to_trackers(detections,trackers,iou_threshold = 0.3):
     return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
 
   iou_matrix = iou_batch(detections, trackers)
+  # Show the Association matrix for the frame 100
+  if frame == 100:
+      print("Print Association matrix: ", iou_matrix)
 
   if min(iou_matrix.shape) > 0:
     a = (iou_matrix > iou_threshold).astype(np.int32)
@@ -232,7 +237,8 @@ class Sort(object):
     trks = np.ma.compress_rows(np.ma.masked_invalid(trks))
     for t in reversed(to_del):
       self.trackers.pop(t)
-    matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(dets,trks, self.iou_threshold)
+      
+    matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(dets, trks, self.frame_count, self.iou_threshold)
 
     # update matched trackers with assigned detections
     for m in matched:
@@ -258,13 +264,12 @@ class Sort(object):
 def parse_args():
     """Parse input arguments."""
     parser = argparse.ArgumentParser(description='SORT demo')
-    #parser.add_argument('--display', dest='display', help='Display online tracker output (slow) [False]',action='store_true')
-    parser.add_argument('--display', default=True, dest='display', help='Display online tracker output (slow) [False]',action='store_true')
+    parser.add_argument('--display', dest='display', help='Display online tracker output (slow) [False]',action='store_true', default=True)
     parser.add_argument("--seq_path", help="Path to detections.", type=str, default='data')
     parser.add_argument("--phase", help="Subdirectory in seq_path.", type=str, default='train')
     parser.add_argument("--max_age", 
                         help="Maximum number of frames to keep alive a track without associated detections.", 
-                        type=int, default=1)
+                        type=int, default=5)
     parser.add_argument("--min_hits", 
                         help="Minimum number of associated detections before track is initialised.", 
                         type=int, default=3)
@@ -280,6 +285,10 @@ if __name__ == '__main__':
   total_time = 0.0
   total_frames = 0
   colours = np.random.rand(32, 3) #used only for display
+  
+  USE_OWN_DETECTIONS = True # Control flaw for using our own objects detector
+  detection_model = YOLO("yolov8n.pt")  # load a pretrained model (recommended for training)
+  
   if(display):
     if not os.path.exists('mot_benchmark'):
       print('\n\tERROR: mot_benchmark link not found!\n\n    Create a symbolic link to the MOT benchmark\n    (https://motchallenge.net/data/2D_MOT_2015/#download). E.g.:\n\n    $ ln -s /path/to/MOT2015_challenge/2DMOT2015 mot_benchmark\n\n')
@@ -293,27 +302,25 @@ if __name__ == '__main__':
   pattern = os.path.join(args.seq_path, phase, '*', 'det', 'det.txt')
   
   for seq_dets_fn in glob.glob(pattern):
-    # video_writer = cv2.VideoWriter("sort-gitt-mot.avi", cv2.VideoWriter_fourcc(*'DIVX'), 20, (640, 480))
-    #fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-    #video_writer = cv2.VideoWriter("sort-gitt-results.avi", fourcc, 20, (640, 480))
-    #video_writer = cv2.VideoWriter('sort-gitt-results.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 20, (640, 480))
-    video_writer = cv2.VideoWriter('videoSalida.avi',cv2.VideoWriter_fourcc(*'XVID'),20.0,(640,480))
-    
+
+    # Call to the tracker
     mot_tracker = Sort(max_age=args.max_age, 
                        min_hits=args.min_hits,
                        iou_threshold=args.iou_threshold) #create instance of the SORT tracker
     seq_dets = np.loadtxt(seq_dets_fn, delimiter=',')
     seq = seq_dets_fn[pattern.find('*'):].split(os.path.sep)[0]
-    
-#    print("Analyzing sequence: ", seq)
-    
+
+    print(f"Analyzing {seq}")
+  
     with open(os.path.join('output', '%s.txt'%(seq)),'w') as out_file:
       print("Processing %s."%(seq))
       for frame in range(int(seq_dets[:,0].max())):
         print("frame: ", frame)
+
         frame += 1 #detection and frame numbers begin at 1
-        dets = seq_dets[seq_dets[:, 0]==frame, 2:7]
-        dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
+        if not USE_OWN_DETECTIONS: # Detections come from a file
+          dets = seq_dets[seq_dets[:, 0]==frame, 2:7]
+          dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
         total_frames += 1
 
         if(display):
@@ -321,6 +328,39 @@ if __name__ == '__main__':
           im =io.imread(fn)
           ax1.imshow(im)
           plt.title(seq + ' Tracked Targets')
+
+        if USE_OWN_DETECTIONS: # Detections come from YOLO
+          detection_results = detection_model(fn)[0] # 0 since batch_size = 1 in this case
+          # detection_results is an object derived from the class 'ultralytics.yolo.engine.results.Results'
+          # Attributes:
+            # orig_img (numpy.ndarray): The original image as a numpy array.
+            # orig_shape (tuple): The original image shape in (height, width) format.
+            # boxes (Boxes, optional): A Boxes object containing the detection bounding boxes.
+            # masks (Masks, optional): A Masks object containing the detection masks.
+            # probs (numpy.ndarray, optional): A 2D numpy array of detection probabilities for each class.
+            # names (dict): A dictionary of class names.
+            # path (str): The path to the image file.
+            # keypoints (List[List[float]], optional): A list of detected keypoints for each object.
+            # speed (dict): A dictionary of preprocess, inference and postprocess speeds in milliseconds per image.
+            # _keys (tuple): A tuple of attribute names for non-empty attributes.
+            
+          # 1. Get coordinates (boxes have different formats: xywh, xywhn, xyxy, xyxyn (n means normalized)). 
+          # Since in this lesson we require the xy coordinates of the top-left and bottom-right corner -> xyxy
+
+          dets = detection_results.boxes.xyxy.cpu().detach().numpy()
+          
+          # 2. In this lesson we will only track pedestrians. To check the classes of our DL model (YOLOv8 with this configuration):
+          
+          # detection_results.names -> You can check 0 is person
+          
+          # 2.1. Get object types:
+          
+          object_types = detection_results.boxes.cls.cpu().detach().numpy()
+          
+          # 2.2. Filter 2D bounding boxes coordinates according to our class of interest (Pedestrian == 0)
+          
+          type_of_interest_id = 0 # Introduce Pedestrian ID
+          dets = dets[object_types == type_of_interest_id,:] # Chose the files corresponding with Pedestrians
 
         start_time = time.time()
         trackers = mot_tracker.update(dets)
@@ -331,21 +371,23 @@ if __name__ == '__main__':
           print('%d,%d,%.2f,%.2f,%.2f,%.2f,1,-1,-1,-1'%(frame,d[4],d[0],d[1],d[2]-d[0],d[3]-d[1]),file=out_file)
           if(display):
             d = d.astype(np.int32)
-            ax1.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=3,ec=colours[d[4]%32,:]))
+            tracker_colour = colours[d[4]%32,:]
+            ax1.add_patch(patches.Rectangle((d[0],d[1]),d[2]-d[0],d[3]-d[1],fill=False,lw=3,ec=tracker_colour))
+            label = 'ID %0d'%d[4].astype(int) # Generate a label with the tracker ID
+            ax1.text(d[0]+20,d[1],label,color=tracker_colour) # Show the label for each box using ax1.text(). Hint: use tracker_color
 
         fig.canvas.draw()
 
         # Now we can save it to a numpy array.
         data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
         data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        data1 = cv2.resize(data,(864,576), interpolation = cv2.INTER_AREA) # To see better the image
+        cv2.imshow("Output Image",data1)
+        ax1.cla()
         
-        data = cv2.resize(data,(640,480), interpolation = cv2.INTER_AREA)
-
-        video_writer.write(data)
-        if(display):
-          fig.canvas.flush_events()
-          plt.draw()
-          ax1.cla()
+        # Exit if ESC pressed
+        k = cv2.waitKey(1) & 0xff
+        if k == 27 : break
 
   cv2.destroyAllWindows()
 
