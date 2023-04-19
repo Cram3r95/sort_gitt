@@ -9,3 +9,5 @@ __pycache__/
 # This particular repo
 
 output/
+runs/
+wandb/

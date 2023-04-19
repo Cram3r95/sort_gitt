@@ -1,3 +1,6 @@
+#!/usr/bin/env python3.8
+# -*- coding: utf-8 -*-
+
 """
     SORT: A Simple, Online and Realtime Tracker
     Copyright (C) 2016-2020 Alex Bewley alex@bewley.ai
@@ -316,7 +319,7 @@ if __name__ == '__main__':
 
     print(f"Analyzing {seq}")
   
-    with open(os.path.join('output', '%s.txt'%(seq)),'w') as out_file:
+    with open(os.path.join('mot_output', '%s.txt'%(seq)),'w') as out_file:
       print("Processing %s."%(seq))
       for frame in range(int(seq_dets[:,0].max())):
         print("frame: ", frame)
